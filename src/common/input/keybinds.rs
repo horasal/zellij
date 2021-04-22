@@ -9,9 +9,9 @@ use zellij_tile::data::*;
 
 /// Used in the config struct
 #[derive(Clone, Debug, PartialEq)]
-pub struct Keybinds(HashMap<InputMode, ModeKeybinds>);
+pub struct Keybinds(pub HashMap<InputMode, ModeKeybinds>);
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ModeKeybinds(HashMap<Key, Vec<Action>>);
+pub struct ModeKeybinds(pub HashMap<Key, Vec<Action>>);
 
 /// Intermediate struct used for deserialisation
 /// Used in the config file.
@@ -110,7 +110,7 @@ impl Keybinds {
     }
 
     /// Returns the default keybinds for a given [`InputMode`].
-    fn get_defaults_for_mode(mode: &InputMode) -> ModeKeybinds {
+    pub fn get_defaults_for_mode(mode: &InputMode) -> ModeKeybinds {
         let mut defaults = HashMap::new();
 
         match *mode {
