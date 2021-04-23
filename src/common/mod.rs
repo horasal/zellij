@@ -525,10 +525,8 @@ pub fn start(mut os_input: Box<dyn OsApi>, opts: CliArgs) {
                             let event_type = EventType::from_str(&event.to_string()).unwrap();
                             if (pid.is_none() || pid == Some(i)) && subs.contains(&event_type) {
                                 let update = instance.exports.get_function("update").unwrap();
-                                wasi_write_string(
-                                    &plugin_env.wasi_env,
-                                    &serde_json::to_string(&event).unwrap(),
-                                );
+                                let json = serde_json::to_string(&event).unwrap();
+                                wasi_write_string(&plugin_env.wasi_env, &json);
                                 update.call(&[]).unwrap();
                             }
                         }
