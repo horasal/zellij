@@ -1,9 +1,8 @@
 use std::fmt::{Display, Formatter};
 
+use super::actions::Action;
 use serde::{Deserialize, Serialize};
 use strum_macros::{EnumDiscriminants, EnumIter, EnumString, ToString};
-use super::actions::{Action};
-use std::collections::HashMap;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Key {
@@ -106,7 +105,7 @@ impl Default for InputMode {
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct ModeInfo {
     pub mode: InputMode,
-    pub keybinds: HashMap<Key, Vec<Action>>, 
+    pub keybinds: Vec<(Key, Vec<Action>)>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
