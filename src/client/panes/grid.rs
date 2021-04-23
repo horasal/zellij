@@ -311,8 +311,9 @@ impl Grid {
                     canonical_line_parts.push(Row::new().canonical());
                 }
                 while !canonical_line.columns.is_empty() {
-                    let next_wrap = if canonical_line.len() > new_columns {
-                        canonical_line.columns.drain(..new_columns)
+                    let next_wrap = if canonical_line.width() > new_columns {
+                        let index = canonical_line.index_at_column(new_columns);
+                        canonical_line.columns.drain(.. index)
                     } else {
                         canonical_line.columns.drain(..)
                     };
@@ -320,11 +321,19 @@ impl Grid {
                     // if there are no more parts, this row is canonical as long as it originally
                     // was canonical (it might not have been for example if it's the first row in
                     // the viewport, and the actual canonical row is above it in the scrollback)
-                    let row = if canonical_line_parts.is_empty() && canonical_line.is_canonical {
+                    let mut row = if canonical_line_parts.is_empty() && canonical_line.is_canonical {
                         row.canonical()
                     } else {
                         row
                     };
+                    // wrapped row is not guarantee be equal with new_columns
+                    // e.g. 
+                    //        |- widechar
+                    // abcdegh[]cde
+                    //        |-- new_columns
+                    if row.width() + 1 == new_columns {
+                        row.push(EMPTY_TERMINAL_CHARACTER);
+                    }
                     canonical_line_parts.push(row);
                 }
                 new_viewport_rows.append(&mut canonical_line_parts);
@@ -414,7 +423,8 @@ impl Grid {
             .map(|r| {
                 let mut line: Vec<TerminalCharacter> = r.columns.iter().copied().collect();
                 // pad line
-                line.resize(self.width, EMPTY_TERMINAL_CHARACTER);
+                let pad = self.width.checked_sub(r.width()).unwrap_or(0);
+                line.resize(line.len()+pad, EMPTY_TERMINAL_CHARACTER);
                 line
             })
             .collect();
@@ -518,9 +528,18 @@ impl Grid {
     pub fn move_cursor_to_beginning_of_line(&mut self) {
         self.cursor.x = 0;
     }
+    // move cursor backwards by **COUNT char**
     pub fn move_cursor_backwards(&mut self, count: usize) {
-        if self.cursor.x > count {
-            self.cursor.x -= count;
+        let width = match self.viewport.get_mut(self.cursor.y) {
+            Some(row) => {
+                // char may be wide, we should count there real width
+                let index = row.index_at_column(self.cursor.x);
+                row.width_between(index-count, index)
+            }
+            None => count,
+        };
+        if self.cursor.x > width {
+            self.cursor.x -= width;
         } else {
             self.cursor.x = 0;
         }
@@ -584,7 +603,15 @@ impl Grid {
         self.move_cursor_forward_until_edge(1);
     }
     pub fn move_cursor_forward_until_edge(&mut self, count: usize) {
-        let count_to_move = std::cmp::min(count, self.width - (self.cursor.x));
+        let width = match self.viewport.get(self.cursor.y){
+            Some(row) => {
+                let index = row.index_at_column(self.cursor.x);
+                let width = row.width_between(index, index+count);
+                width + (index+count).checked_sub(row.len()).unwrap_or(0)
+            },
+            None => count,
+        };
+        let count_to_move = std::cmp::min(width, self.width - (self.cursor.x));
         self.cursor.x += count_to_move;
     }
     pub fn replace_characters_in_line_after_cursor(&mut self, replace_with: TerminalCharacter) {
@@ -631,7 +658,7 @@ impl Grid {
     }
     fn pad_current_line_until(&mut self, position: usize) {
         let current_row = self.viewport.get_mut(self.cursor.y).unwrap();
-        for _ in current_row.len()..position {
+        for _ in current_row.width()..position {
             current_row.push(EMPTY_TERMINAL_CHARACTER);
         }
     }
@@ -689,11 +716,20 @@ impl Grid {
         }
         self.pad_lines_until(self.cursor.y, pad_character);
     }
+    // any different with move_cursor_backwards?
     pub fn move_cursor_back(&mut self, count: usize) {
-        if self.cursor.x < count {
+        let width = match self.viewport.get_mut(self.cursor.y) {
+            Some(row) => {
+                // char may be wide, we should count there real width
+                let index = row.index_at_column(self.cursor.x);
+                row.width_between(index-count, index)
+            }
+            None => count,
+        };
+        if self.cursor.x < width {
             self.cursor.x = 0;
         } else {
-            self.cursor.x -= count;
+            self.cursor.x -= width ;
         }
     }
     pub fn hide_cursor(&mut self) {
@@ -818,6 +854,7 @@ impl vte::Perform for Grid {
         // is a little faster
         let terminal_character = TerminalCharacter {
             character: c,
+            is_empty: false, 
             styles: self.pending_styles,
         };
         self.add_character(terminal_character);
@@ -1156,37 +1193,45 @@ impl Row {
         self.is_canonical = true;
         self
     }
+    /// add character at **column** number
+    /// x: the column number
     pub fn add_character_at(&mut self, terminal_character: TerminalCharacter, x: usize) {
-        match self.columns.len().cmp(&x) {
+        match self.width().cmp(&x) {
+            // insert at the last column
             Ordering::Equal => self.columns.push(terminal_character),
+            // self.width < x, we should pad (x-self.width()) char
+            // notice that self.columns.len() is not always equal to self.width()
             Ordering::Less => {
-                self.columns.resize(x, EMPTY_TERMINAL_CHARACTER);
+                let pad = x-self.width();
+                self.columns.resize(self.len()+pad, EMPTY_TERMINAL_CHARACTER);
                 self.columns.push(terminal_character);
             }
             Ordering::Greater => {
+                let index = self.index_at_column(x);
                 // this is much more performant than remove/insert
                 self.columns.push(terminal_character);
-                self.columns.swap_remove(x);
+                self.columns.swap_remove(index);
             }
         }
     }
     pub fn insert_character_at(&mut self, terminal_character: TerminalCharacter, x: usize) {
-        match self.columns.len().cmp(&x) {
+        match self.width().cmp(&x) {
             Ordering::Equal => self.columns.push(terminal_character),
             Ordering::Less => {
-                self.columns.resize(x, EMPTY_TERMINAL_CHARACTER);
+                let pad = x-self.width();
+                self.columns.resize(self.len()+pad, EMPTY_TERMINAL_CHARACTER);
                 self.columns.push(terminal_character);
             }
             Ordering::Greater => {
-                self.columns.insert(x, terminal_character);
+                self.columns.insert(self.index_at_column(x), terminal_character);
             }
         }
     }
     pub fn replace_character_at(&mut self, terminal_character: TerminalCharacter, x: usize) {
         // this is much more performant than remove/insert
-        if x < self.columns.len() {
+        if x < self.width() {
             self.columns.push(terminal_character);
-            self.columns.swap_remove(x);
+            self.columns.swap_remove(self.index_at_column(x));
         }
     }
     pub fn replace_columns(&mut self, columns: Vec<TerminalCharacter>) {
@@ -1195,38 +1240,95 @@ impl Row {
     pub fn push(&mut self, terminal_character: TerminalCharacter) {
         self.columns.push(terminal_character);
     }
+    /// truncate according to width
+    /// x: max column
     pub fn truncate(&mut self, x: usize) {
-        self.columns.truncate(x);
+        self.columns.truncate(self.index_at_column(x));
     }
     pub fn append(&mut self, to_append: &mut Vec<TerminalCharacter>) {
         self.columns.append(to_append);
     }
+    /// TODO
+    /// figure out if we should keep width of row unchanged after replace
     pub fn replace_beginning_with(&mut self, mut line_part: Vec<TerminalCharacter>) {
-        if line_part.len() > self.columns.len() {
+        let part_width : usize = line_part.iter().map(|c| c.width()).sum();
+        if part_width > self.width() {
             self.columns.clear();
         } else {
-            drop(self.columns.drain(0..line_part.len()));
+            // line_part may contain widecar
+            drop(self.columns.drain(0..self.index_at_column(part_width)));
         }
         line_part.append(&mut self.columns);
         self.columns = line_part;
     }
+    /// return the index of character by given a width position
+    /// if width > self.width, it will return the last index
+    pub fn index_at_column(&self, col: usize) -> usize {
+        let mut width = 0;
+        let mut index = 0;
+        for (i, c) in self.columns.iter().enumerate() {
+            if width + 1 > col {
+                index = i;
+                break;
+            }
+            width += c.width();
+        }
+        index
+    }
+    // FIXME 
+    // handle Option from get
+    pub fn width_at(&self, index: usize) -> usize {
+        self.columns.get(index).map(|c| c.width()).unwrap_or(1)
+    }
+    pub fn width_between(&self, start: usize, end: usize) -> usize {
+        self.columns.iter().skip(start).take(end).map(|c| c.width()).sum()
+    }
+    /// Return the width of a row
+    /// width may be different with len() if row contains widechars (e.g. CJK)
+    pub fn width(&self) -> usize {
+        self.columns.iter().map(|c| c.width()).sum()
+    }
+    /// Return the number of character in row
     pub fn len(&self) -> usize {
         self.columns.len()
     }
+    /// detele character at a column
     pub fn delete_character(&mut self, x: usize) {
-        if x < self.columns.len() {
-            self.columns.remove(x);
+        if x < self.width() {
+            self.columns.remove(self.index_at_column(x));
         }
     }
     pub fn split_to_rows_of_length(&mut self, max_row_length: usize) -> Vec<Row> {
         let mut parts: Vec<Row> = vec![];
         let mut current_part: Vec<TerminalCharacter> = vec![];
+        let mut current_width = 0;
         for character in self.columns.drain(..) {
-            if current_part.len() == max_row_length {
+            if current_width == max_row_length {
+                // perfect match 
                 parts.push(Row::from_columns(current_part));
                 current_part = vec![];
+                current_width = 0;
+            } else if current_width + 1 == max_row_length  {
+                // current_width = even, max_row = odd
+                // current_width = odd, max_row = even
+                // if next character is narrow char, we could add it to current row 
+                if character.width() == 1 {
+                    current_part.push(character);
+                    parts.push(Row::from_columns(current_part));
+                    current_part = vec![];
+                    current_width = 0;
+                } else {
+                    // else, we have to push an empty character to fill it
+                    current_part.push(EMPTY_TERMINAL_CHARACTER);
+                    parts.push(Row::from_columns(current_part));
+                    current_part = vec![];
+                    current_width = 0;
+                }
+            } else {
+                // other cases, we can just push it
+                current_part.push(character);
+                current_width += character.width();
             }
-            current_part.push(character);
         }
         if !current_part.is_empty() {
             parts.push(Row::from_columns(current_part))

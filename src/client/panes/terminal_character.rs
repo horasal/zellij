@@ -1,8 +1,14 @@
+use unicode_width::UnicodeWidthChar;
+
 use crate::utils::logging::debug_log_to_file;
 use ::std::fmt::{self, Debug, Display, Formatter};
 
 pub const EMPTY_TERMINAL_CHARACTER: TerminalCharacter = TerminalCharacter {
     character: ' ',
+    // EMPTY is used to padding rows/cols
+    // however we also need to remove it in future operations
+    // this flag allow us only elimate empty char
+    is_empty: true,
     styles: CharacterStyles {
         foreground: Some(AnsiCode::Reset),
         background: Some(AnsiCode::Reset),
@@ -626,7 +632,17 @@ impl Display for CharacterStyles {
 #[derive(Clone, Copy)]
 pub struct TerminalCharacter {
     pub character: char,
+    pub is_empty : bool,
     pub styles: CharacterStyles,
+}
+
+impl TerminalCharacter {
+    pub fn width(&self) -> usize {
+        // calculate character's width 
+        // TODO figure out if we need to limit width only be 1 or 2.
+        // e.g. some characters may be 4 but only 2 is visible
+        self.character.width().unwrap_or(0)
+    }
 }
 
 impl ::std::fmt::Debug for TerminalCharacter {
