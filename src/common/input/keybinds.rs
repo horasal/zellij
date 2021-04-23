@@ -1,11 +1,9 @@
 //! Mapping of inputs to sequences of actions.
 use std::collections::HashMap;
 
-use super::actions::{Action, Direction};
-
 use serde::Deserialize;
 use strum::IntoEnumIterator;
-use zellij_tile::data::*;
+use zellij_tile::{actions::{Action, Direction}, data::*};
 
 /// Used in the config struct
 #[derive(Clone, Debug, PartialEq)]
